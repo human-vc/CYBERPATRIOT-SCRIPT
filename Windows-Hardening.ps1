@@ -9,7 +9,7 @@
     Run as Administrator
     Review README before running - update $AuthorizedUsers and $AuthorizedAdmins
 .VERSION
-    2.0 - Complete Edition
+    2.1 - Complete Edition with CyberPatriot Additions
 #>
 
 # ============================================================
@@ -287,30 +287,65 @@ function Set-SecurityOptions {
         # Enable LSA Protection
         @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"; Name="RunAsPPL"; Value=1},
         
-        # Disable Windows Script Host (optional - may break legitimate scripts)
-        # @{Path="HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings"; Name="Enabled"; Value=0},
-        
         # Safe DLL search mode
         @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"; Name="SafeDllSearchMode"; Value=1},
         
         # Prevent driver installation from removable media
-        @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverInstall\Restrictions"; Name="AllowRemoteRPC"; Value=0}
+        @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\DriverInstall\Restrictions"; Name="AllowRemoteRPC"; Value=0},
+        
+        # ===== ADDITIONAL CYBERPATRIOT ITEMS =====
+        
+        # Require Ctrl+Alt+Del for logon
+        @{Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"; Name="DisableCAD"; Value=0},
+        
+        # Windows SmartScreen
+        @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="EnableSmartScreen"; Value=1},
+        @{Path="HKLM:\SOFTWARE\Policies\Microsoft\Windows\System"; Name="ShellSmartScreenLevel"; Value="Block"},
+        
+        # Legal notice banner
+        @{Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"; Name="LegalNoticeCaption"; Value="Authorized Users Only"},
+        @{Path="HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"; Name="LegalNoticeText"; Value="Unauthorized access is prohibited."},
+        
+        # UPnP disable
+        @{Path="HKLM:\SOFTWARE\Microsoft\DirectplayNATHelp\DPNHUPnP"; Name="UPnPMode"; Value=2},
+        
+        # Event log max sizes (1GB)
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Security"; Name="MaxSize"; Value=1073741824},
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\Application"; Name="MaxSize"; Value=1073741824},
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Services\EventLog\System"; Name="MaxSize"; Value=1073741824},
+        
+        # Disable anonymous SID enumeration
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"; Name="RestrictAnonymousSAM"; Value=1},
+        
+        # Network security: Do not store LM hash
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"; Name="NoLMHash"; Value=1},
+        
+        # Disable remote registry paths
+        @{Path="HKLM:\SYSTEM\CurrentControlSet\Control\SecurePipeServers\Winreg\AllowedExactPaths"; Name="Machine"; Value=""},
+        
+        # Screen saver settings
+        @{Path="HKCU:\Control Panel\Desktop"; Name="ScreenSaveActive"; Value="1"},
+        @{Path="HKCU:\Control Panel\Desktop"; Name="ScreenSaverIsSecure"; Value="1"},
+        @{Path="HKCU:\Control Panel\Desktop"; Name="ScreenSaveTimeOut"; Value="600"}
     )
     
     foreach ($setting in $regSettings) {
         if (!(Test-Path $setting.Path)) {
             New-Item -Path $setting.Path -Force | Out-Null
         }
-        Set-ItemProperty -Path $setting.Path -Name $setting.Name -Value $setting.Value -Type DWord -ErrorAction SilentlyContinue
+        
+        # Handle string vs dword
+        if ($setting.Value -is [string]) {
+            Set-ItemProperty -Path $setting.Path -Name $setting.Name -Value $setting.Value -Type String -ErrorAction SilentlyContinue
+        } else {
+            Set-ItemProperty -Path $setting.Path -Name $setting.Name -Value $setting.Value -Type DWord -ErrorAction SilentlyContinue
+        }
         Write-Success "Set: $($setting.Name) = $($setting.Value)"
     }
 }
 
 function Set-UserRightsAssignment {
     Write-Info "========== USER RIGHTS ASSIGNMENT =========="
-    
-    # This requires secedit
-    # Export, modify, and reimport security policy
     
     Write-Warning "User Rights Assignment requires manual review in secpol.msc"
     Write-Warning "Check these settings:"
@@ -504,7 +539,9 @@ function Set-RDPSecurity {
         Write-Host "Disable clipboard redirection for RDP? (y/n): " -NoNewline -ForegroundColor Yellow
         $response = Read-Host
         if ($response -eq 'y') {
-            Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name 'fDisableClip' -Value 1
+            $tsPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+            if (!(Test-Path $tsPath)) { New-Item -Path $tsPath -Force | Out-Null }
+            Set-ItemProperty -Path $tsPath -Name 'fDisableClip' -Value 1
             Write-Success "Clipboard redirection disabled"
         }
         
@@ -512,7 +549,9 @@ function Set-RDPSecurity {
         Write-Host "Disable drive redirection for RDP? (y/n): " -NoNewline -ForegroundColor Yellow
         $response = Read-Host
         if ($response -eq 'y') {
-            Set-ItemProperty -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services' -Name 'fDisableCdm' -Value 1
+            $tsPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services"
+            if (!(Test-Path $tsPath)) { New-Item -Path $tsPath -Force | Out-Null }
+            Set-ItemProperty -Path $tsPath -Name 'fDisableCdm' -Value 1
             Write-Success "Drive redirection disabled"
         }
         
@@ -731,7 +770,7 @@ function Find-ProhibitedSoftware {
         "*abel*",
         "*keylogger*",
         "*metasploit*",
-        "*john*",          # John the Ripper
+        "*john*",
         "*hashcat*",
         "*aircrack*",
         "*burp*",
@@ -973,10 +1012,10 @@ function Invoke-FeatureAudit {
         "SMB1Protocol",
         "SMB1Protocol-Client",
         "SMB1Protocol-Server",
-        "PowerShell-V2",          # Legacy PowerShell
+        "PowerShell-V2",
         "MicrosoftWindowsPowerShellV2",
         "MicrosoftWindowsPowerShellV2Root",
-        "Internet-Explorer-Optional-amd64",  # IE (legacy browser)
+        "Internet-Explorer-Optional-amd64",
         "WorkFolders-Client",
         "WindowsMediaPlayer"
     )
@@ -1217,9 +1256,6 @@ function Invoke-BrowserAudit {
     # Internet Explorer / Edge settings
     Write-Info "Checking Internet Explorer/Edge security zones..."
     
-    $iePath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Zones"
-    
-    # Zone 3 = Internet Zone (should be most restrictive)
     $internetZone = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings\Zones\3"
     if (Test-Path $internetZone) {
         $settings = Get-ItemProperty $internetZone -ErrorAction SilentlyContinue
@@ -1231,10 +1267,6 @@ function Invoke-BrowserAudit {
         # Check scripting (1400 = Active scripting)
         if ($settings.'1400' -eq 0) {
             Write-Warning "IE: Active scripting enabled in Internet Zone"
-        }
-        # Check downloads (1803 = File downloads)
-        if ($settings.'1803' -eq 0) {
-            Write-Info "IE: File downloads enabled in Internet Zone"
         }
     }
     
@@ -1273,12 +1305,6 @@ function Invoke-BrowserAudit {
         }
     }
     
-    # Check default search engine hijacking
-    $ieSearch = (Get-ItemProperty "HKCU:\Software\Microsoft\Internet Explorer\SearchScopes" -ErrorAction SilentlyContinue)
-    if ($ieSearch) {
-        Write-Info "IE Search Scope configured - verify manually if needed"
-    }
-    
     # Secure IE settings
     Write-Host "Harden Internet Explorer settings? (y/n): " -NoNewline -ForegroundColor Yellow
     $response = Read-Host
@@ -1290,6 +1316,64 @@ function Invoke-BrowserAudit {
         # Enable SmartScreen
         Set-ItemProperty -Path "HKCU:\Software\Microsoft\Internet Explorer\PhishingFilter" -Name "EnabledV9" -Value 1 -Type DWord -ErrorAction SilentlyContinue
         Write-Success "IE security settings hardened"
+    }
+}
+
+# ============================================================
+# FIREFOX HARDENING (CyberPatriot specific)
+# ============================================================
+
+function Set-FirefoxSecurity {
+    Write-Info "========== FIREFOX SECURITY =========="
+    
+    $firefoxProfiles = "$env:APPDATA\Mozilla\Firefox\Profiles"
+    
+    if (Test-Path $firefoxProfiles) {
+        $profiles = Get-ChildItem $firefoxProfiles -Directory
+        
+        foreach ($profile in $profiles) {
+            $prefsFile = Join-Path $profile.FullName "prefs.js"
+            $userPrefsFile = Join-Path $profile.FullName "user.js"
+            
+            Write-Info "Found Firefox profile: $($profile.Name)"
+            
+            # Create user.js with secure settings
+            $secureSettings = @"
+// CyberPatriot Firefox Hardening
+user_pref("privacy.donottrackheader.enabled", true);
+user_pref("browser.safebrowsing.malware.enabled", true);
+user_pref("browser.safebrowsing.phishing.enabled", true);
+user_pref("browser.safebrowsing.downloads.enabled", true);
+user_pref("browser.safebrowsing.downloads.remote.block_potentially_unwanted", true);
+user_pref("browser.safebrowsing.downloads.remote.block_uncommon", true);
+user_pref("network.cookie.cookieBehavior", 1);
+user_pref("privacy.trackingprotection.enabled", true);
+user_pref("geo.enabled", false);
+user_pref("browser.search.suggest.enabled", false);
+user_pref("browser.formfill.enable", false);
+user_pref("signon.rememberSignons", false);
+user_pref("network.prefetch-next", false);
+user_pref("network.dns.disablePrefetch", true);
+user_pref("browser.send_pings", false);
+user_pref("dom.battery.enabled", false);
+user_pref("media.navigator.enabled", false);
+user_pref("webgl.disabled", true);
+"@
+            
+            Write-Host "Apply secure Firefox settings to this profile? (y/n): " -NoNewline -ForegroundColor Yellow
+            $response = Read-Host
+            if ($response -eq 'y') {
+                Set-Content -Path $userPrefsFile -Value $secureSettings -Force
+                Write-Success "Firefox security settings applied to: $($profile.Name)"
+            }
+        }
+        
+        Write-Warning "Remember to also:"
+        Write-Warning "  1. Update Firefox (Help > About Firefox)"
+        Write-Warning "  2. Review installed extensions"
+        Write-Warning "  3. Check Settings > Privacy & Security"
+    } else {
+        Write-Info "Firefox not installed or no profiles found"
     }
 }
 
@@ -1348,18 +1432,6 @@ function Invoke-QuickWins {
         Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings" -Name "Enabled" -Value 0 -Type DWord -ErrorAction SilentlyContinue
         Write-Success "Windows Script Host disabled"
     }
-    
-    # Enable Credential Guard (if supported)
-    $cg = Get-CimInstance -ClassName Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard -ErrorAction SilentlyContinue
-    if ($cg) {
-        Write-Info "Credential Guard status: Check Device Guard settings manually"
-    }
-    
-    # Set screen saver with password
-    Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaveActive" -Value "1"
-    Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaverIsSecure" -Value "1"
-    Set-ItemProperty -Path "HKCU:\Control Panel\Desktop" -Name "ScreenSaveTimeOut" -Value "600"  # 10 minutes
-    Write-Success "Screen saver with password enabled (10 min timeout)"
 }
 
 # ============================================================
@@ -1434,7 +1506,7 @@ function Show-Menu {
     Clear-Host
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host "  CYBERPATRIOT WINDOWS HARDENING SCRIPT" -ForegroundColor Cyan
-    Write-Host "         Complete Edition v2.0" -ForegroundColor Cyan
+    Write-Host "         Complete Edition v2.1" -ForegroundColor Cyan
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "  [1]  Run ALL Hardening (Recommended)" -ForegroundColor Green
@@ -1464,10 +1536,11 @@ function Show-Menu {
     Write-Host "  [17] Startup Programs Audit" -ForegroundColor Yellow
     Write-Host "  [18] DNS Settings Audit" -ForegroundColor Yellow
     Write-Host "  [19] Browser Security Audit" -ForegroundColor Yellow
+    Write-Host "  [20] Firefox Security" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  --- Tools ---" -ForegroundColor Magenta
-    Write-Host "  [20] Quick Wins" -ForegroundColor Yellow
-    Write-Host "  [21] Forensics Helper" -ForegroundColor Yellow
+    Write-Host "  [21] Quick Wins" -ForegroundColor Yellow
+    Write-Host "  [22] Forensics Helper" -ForegroundColor Yellow
     Write-Host ""
     Write-Host "  [0]  Exit" -ForegroundColor Red
     Write-Host ""
@@ -1495,6 +1568,7 @@ function Invoke-AllHardening {
     Invoke-StartupAudit
     Invoke-DNSAudit
     Invoke-BrowserAudit
+    Set-FirefoxSecurity
     Invoke-QuickWins
     
     Write-Info "=========================================="
@@ -1508,6 +1582,7 @@ function Invoke-AllHardening {
     Write-Warning "  3. Review browser extensions manually"
     Write-Warning "  4. Check for hidden files/folders"
     Write-Warning "  5. Review README for any specific requirements"
+    Write-Warning "  6. Answer Forensics Questions on desktop"
     Write-Warning ""
 }
 
@@ -1553,8 +1628,9 @@ do {
         "17" { Invoke-StartupAudit }
         "18" { Invoke-DNSAudit }
         "19" { Invoke-BrowserAudit }
-        "20" { Invoke-QuickWins }
-        "21" { Get-ForensicsInfo }
+        "20" { Set-FirefoxSecurity }
+        "21" { Invoke-QuickWins }
+        "22" { Get-ForensicsInfo }
         "0"  { Write-Host "Exiting..."; break }
         default { Write-Host "Invalid option" -ForegroundColor Red }
     }
